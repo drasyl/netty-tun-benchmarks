@@ -14,6 +14,7 @@ import org.drasyl.channel.tun.TunChannel;
 import org.drasyl.channel.tun.TunPacket;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Fork;
 import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Mode;
 import org.openjdk.jmh.annotations.Param;
@@ -74,7 +75,7 @@ public class TunChannelWriteBenchmark extends AbstractBenchmark {
             channel = new Bootstrap()
                     .group(group)
                     .channel(TunChannel.class)
-                    .option(WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(flushAfter * (packetSize + 20) * 2, flushAfter * (packetSize + 20) * 2))
+                    .option(WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(flushAfter * (packetSize + 32) * 2, flushAfter * (packetSize + 32) * 2))
                     .handler(new ChannelInboundHandlerAdapter())
                     .bind(new TunAddress())
                     .sync()
@@ -110,6 +111,7 @@ public class TunChannelWriteBenchmark extends AbstractBenchmark {
 
     @Benchmark
     @BenchmarkMode(Mode.Throughput)
+    @Fork(0)
     public void write(final Blackhole blackhole) {
         while (!channel.isWritable()) {
             // wait until channel is writable again
@@ -120,7 +122,10 @@ public class TunChannelWriteBenchmark extends AbstractBenchmark {
             future = channel.writeAndFlush(packet.retain());
         }
         else {
+            long a = channel.bytesBeforeUnwritable();
             future = channel.write(packet.retain());
+            long b = channel.bytesBeforeUnwritable();
+            throw new RuntimeException("a=" + a + ", b=" + b);
         }
         blackhole.consume(future);
     }

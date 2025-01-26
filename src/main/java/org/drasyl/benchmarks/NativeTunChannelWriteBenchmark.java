@@ -89,7 +89,7 @@ public class NativeTunChannelWriteBenchmark extends AbstractBenchmark {
             channel = new Bootstrap()
                     .group(group)
                     .channel(channelClass)
-                    .option(WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(flushAfter * (packetSize + 20) * 2, flushAfter * (packetSize + 20) * 2))
+                    .option(WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(flushAfter * (packetSize + 32) * 2, flushAfter * (packetSize + 32) * 2))
                     .handler(new ChannelInboundHandlerAdapter())
                     .bind(new TunAddress())
                     .sync()
