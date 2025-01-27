@@ -3,11 +3,7 @@ package org.drasyl.benchmarks;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelInboundHandlerAdapter;
-import io.netty.channel.DefaultEventLoopGroup;
 import io.netty.channel.EventLoopGroup;
-import io.netty.channel.WriteBufferWaterMark;
 import io.netty.channel.epoll.Epoll;
 import io.netty.channel.epoll.EpollEventLoopGroup;
 import io.netty.channel.epoll.EpollTunChannel;
@@ -18,9 +14,9 @@ import io.netty.channel.socket.Tun4Packet;
 import io.netty.channel.socket.TunAddress;
 import io.netty.channel.socket.TunChannel;
 import io.netty.channel.socket.TunPacket;
+import org.drasyl.benchmarks.TunChannelWriteBenchmark.WriteHandler;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
-import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Mode;
 import org.openjdk.jmh.annotations.Param;
 import org.openjdk.jmh.annotations.Setup;
@@ -37,20 +33,15 @@ import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 
-import static io.netty.channel.ChannelOption.WRITE_BUFFER_WATER_MARK;
 import static org.pcap4j.packet.namednumber.IpVersion.IPV4;
 
 public class NativeTunChannelWriteBenchmark extends AbstractBenchmark {
     private static final String ADDRESS = "10.10.10.10";
-    @Param({ "32" })
-    private int flushAfter;
     @Param({ "1468" })
     private int packetSize;
-    private boolean flush;
-    private int messagesSinceFlush;
     private EventLoopGroup group;
     private Channel channel;
-    private TunPacket packet;
+    protected WriteHandler<TunPacket> writeHandler;
 
     @SuppressWarnings("unchecked")
     @Setup
@@ -83,14 +74,14 @@ public class NativeTunChannelWriteBenchmark extends AbstractBenchmark {
                 )
                 .correctChecksumAtBuild(true)
                 .correctLengthAtBuild(true);
-        packet = new Tun4Packet(Unpooled.wrappedBuffer(packetBuilder.build().getRawData()));
+        final Tun4Packet packet = new Tun4Packet(Unpooled.wrappedBuffer(packetBuilder.build().getRawData()));
 
         try {
+            writeHandler = new WriteHandler<>(packet, oldPacket -> new Tun4Packet(oldPacket.content().retainedDuplicate()));
             channel = new Bootstrap()
                     .group(group)
                     .channel(channelClass)
-                    .option(WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(flushAfter * (packetSize + 32) * 2, flushAfter * (packetSize + 32) * 2))
-                    .handler(new ChannelInboundHandlerAdapter())
+                    .handler(writeHandler)
                     .bind(new TunAddress())
                     .sync()
                     .channel();
@@ -103,7 +94,7 @@ public class NativeTunChannelWriteBenchmark extends AbstractBenchmark {
     @TearDown
     public void teardown() {
         try {
-            packet.release();
+            writeHandler.stopWriting();
             channel.close().await();
             group.shutdownGracefully().await();
         }
@@ -112,31 +103,12 @@ public class NativeTunChannelWriteBenchmark extends AbstractBenchmark {
         }
     }
 
-    @Setup(Level.Invocation)
-    public void setupWrite() {
-        if (++messagesSinceFlush >= flushAfter) {
-            flush = true;
-            messagesSinceFlush = 0;
-        }
-        else {
-            flush = false;
-        }
-    }
-
     @Benchmark
     @BenchmarkMode(Mode.Throughput)
     public void write(final Blackhole blackhole) {
-        while (!channel.isWritable()) {
-            // wait until channel is writable again
+        while (writeHandler.messagesWritten().get() < 1) {
+            // do nothing
         }
-
-        final ChannelFuture future;
-        if (flush) {
-            future = channel.writeAndFlush(packet.retain());
-        }
-        else {
-            future = channel.write(packet.retain());
-        }
-        blackhole.consume(future);
+        blackhole.consume(writeHandler.messagesWritten().getAndDecrement());
     }
 }

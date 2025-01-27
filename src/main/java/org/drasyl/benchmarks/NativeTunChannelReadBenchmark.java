@@ -4,12 +4,8 @@ import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
-import io.netty.channel.ChannelDuplexHandler;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
-import io.netty.channel.DefaultEventLoopGroup;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.epoll.Epoll;
 import io.netty.channel.epoll.EpollEventLoopGroup;
@@ -25,6 +21,7 @@ import io.netty.channel.socket.TunAddress;
 import io.netty.channel.socket.TunChannel;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.util.internal.PlatformDependent;
+import org.drasyl.benchmarks.TunChannelReadBenchmark.WriteHandler;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Mode;
@@ -33,10 +30,7 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.TearDown;
 
 import java.io.IOException;
-import java.net.PortUnreachableException;
 import java.util.concurrent.atomic.AtomicLong;
-
-import static io.netty.channel.ChannelFutureListener.FIRE_EXCEPTION_ON_FAILURE;
 
 public class NativeTunChannelReadBenchmark extends AbstractBenchmark {
     private static final String SRC_ADDRESS = "10.10.10.10";
@@ -48,8 +42,6 @@ public class NativeTunChannelReadBenchmark extends AbstractBenchmark {
     private int packetSize;
     private EventLoopGroup writeGroup;
     private EventLoopGroup group;
-    private ByteBuf msg;
-    private boolean doWrite = true;
     private ChannelGroup writeChannels;
     private Channel channel;
     private final AtomicLong receivedPackets = new AtomicLong();
@@ -69,7 +61,7 @@ public class NativeTunChannelReadBenchmark extends AbstractBenchmark {
             throw new RuntimeException("Unsupported platform: Neither kqueue nor epoll are available");
         }
         // build packet
-        msg = Unpooled.wrappedBuffer(new byte[packetSize]);
+        final ByteBuf msg = Unpooled.wrappedBuffer(new byte[packetSize]);
 
         try {
             channel = new Bootstrap()
@@ -103,10 +95,11 @@ public class NativeTunChannelReadBenchmark extends AbstractBenchmark {
             final Bootstrap writeBootstrap = new Bootstrap()
                     .group(writeGroup)
                     .channel(NioDatagramChannel.class)
-                    .handler(new MyChannelDuplexHandler());
+                    .handler(new WriteHandler<>(msg));
 
             writeChannels = new DefaultChannelGroup(writeGroup.next());
             for (int i = 0; i < writeThreads; i++) {
+                msg.retain();
                 writeChannels.add(writeBootstrap.connect(DST_ADDRESS, PORT).sync().channel());
             }
         }
@@ -118,10 +111,9 @@ public class NativeTunChannelReadBenchmark extends AbstractBenchmark {
     @TearDown
     public void teardown() {
         try {
-            doWrite = false;
-            msg.release();
-            channel.close().await();
+            writeChannels.forEach(channel -> channel.pipeline().get(WriteHandler.class).stopWriting());
             writeChannels.close().await();
+            channel.close().await();
             writeGroup.shutdownGracefully().await();
             group.shutdownGracefully().await();
         }
@@ -137,46 +129,6 @@ public class NativeTunChannelReadBenchmark extends AbstractBenchmark {
             // do nothing
         }
         receivedPackets.getAndDecrement();
-    }
-
-    @ChannelHandler.Sharable
-    private class MyChannelDuplexHandler extends ChannelDuplexHandler {
-        @Override
-        public void channelActive(final ChannelHandlerContext ctx) {
-            ctx.fireChannelActive();
-            scheduleWriteTask(ctx);
-        }
-
-        private void scheduleWriteTask(final ChannelHandlerContext ctx) {
-            if (ctx.channel().isActive()) {
-                ctx.executor().execute(() -> {
-                    while (doWrite && ctx.channel().isWritable()) {
-                        ctx.write(msg.retain()).addListener(FIRE_EXCEPTION_ON_FAILURE);
-                    }
-                    if (!doWrite) {
-                        ctx.close();
-                    }
-                    ctx.flush();
-                });
-            }
-        }
-
-        @Override
-        public void channelWritabilityChanged(final ChannelHandlerContext ctx) {
-            if (ctx.channel().isWritable()) {
-                scheduleWriteTask(ctx);
-            }
-
-            ctx.fireChannelWritabilityChanged();
-        }
-
-        @Override
-        public void exceptionCaught(final ChannelHandlerContext ctx,
-                                    final Throwable cause) {
-            if (!(cause instanceof PortUnreachableException) && !(cause instanceof IOException && "No buffer space available".equals(cause.getMessage()) && ctx.channel().isActive())) {
-                cause.printStackTrace();
-            }
-        }
     }
 
     private static void exec(final String... command) throws IOException {
