@@ -21,7 +21,7 @@ import org.drasyl.channel.tun.Tun4Packet;
 import org.drasyl.channel.tun.TunAddress;
 import org.drasyl.channel.tun.TunChannel;
 import org.drasyl.channel.tun.jna.windows.WindowsTunDevice;
-import org.drasyl.channel.tun.jna.windows.Wintun;
+import org.drasyl.channel.tun.jna.windows.Wintun.WINTUN_ADAPTER_HANDLE;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Mode;
@@ -32,12 +32,13 @@ import org.openjdk.jmh.annotations.TearDown;
 import java.io.IOException;
 import java.net.PortUnreachableException;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Function;
+import java.util.function.UnaryOperator;
 
 import static io.netty.channel.ChannelFutureListener.FIRE_EXCEPTION_ON_FAILURE;
 import static java.util.Objects.requireNonNull;
 import static org.drasyl.channel.tun.jna.windows.Wintun.WintunGetAdapterLUID;
 
+@SuppressWarnings({"java:S112", "java:S2142", "DataFlowIssue", "resource", "NewClassNamingConvention", "JmhInspections", "StatementWithEmptyBody"})
 public class TunChannelReadBenchmark extends AbstractBenchmark {
     private static final String SRC_ADDRESS = "10.10.10.10";
     private static final String DST_ADDRESS = "10.10.10.11";
@@ -52,16 +53,12 @@ public class TunChannelReadBenchmark extends AbstractBenchmark {
     private Channel channel;
     private final AtomicLong receivedPackets = new AtomicLong();
 
-    @SuppressWarnings("unchecked")
     @Setup
     public void setup() {
-        writeGroup = new NioEventLoopGroup(writeThreads);
-        group = new DefaultEventLoopGroup(1);
-
-        // build packet
-        final ByteBuf msg = Unpooled.wrappedBuffer(new byte[packetSize]);
-
         try {
+            writeGroup = new NioEventLoopGroup(writeThreads);
+            group = new DefaultEventLoopGroup(1);
+
             channel = new Bootstrap()
                     .group(group)
                     .channel(TunChannel.class)
@@ -77,7 +74,7 @@ public class TunChannelReadBenchmark extends AbstractBenchmark {
                     .bind(new TunAddress())
                     .sync()
                     .channel();
-            final String name = channel.localAddress().toString();
+            final String name = ((TunAddress) channel.localAddress()).ifName();
 
             if (PlatformDependent.isOsx()) {
                 exec("/sbin/ifconfig", name, "add", SRC_ADDRESS, SRC_ADDRESS);
@@ -86,7 +83,7 @@ public class TunChannelReadBenchmark extends AbstractBenchmark {
             }
             else if (PlatformDependent.isWindows()) {
                 // Windows
-                final Wintun.WINTUN_ADAPTER_HANDLE adapter = ((WindowsTunDevice) ((TunChannel) channel).device()).adapter();
+                final WINTUN_ADAPTER_HANDLE adapter = ((WindowsTunDevice) ((TunChannel) channel).device()).adapter();
 
                 final Pointer interfaceLuid = new Memory(8);
                 WintunGetAdapterLUID(adapter, interfaceLuid);
@@ -97,6 +94,8 @@ public class TunChannelReadBenchmark extends AbstractBenchmark {
                 exec("/sbin/ip", "addr", "add", SRC_ADDRESS + '/' + 31, "dev", name);
                 exec("/sbin/ip", "link", "set", "dev", name, "up");
             }
+
+            final ByteBuf msg = Unpooled.wrappedBuffer(new byte[packetSize]);
 
             final Bootstrap writeBootstrap = new Bootstrap()
                     .group(writeGroup)
@@ -117,7 +116,7 @@ public class TunChannelReadBenchmark extends AbstractBenchmark {
     @TearDown
     public void teardown() {
         try {
-            writeChannels.forEach(channel -> channel.pipeline().get(WriteHandler.class).stopWriting());
+            writeChannels.forEach(ch -> ch.pipeline().get(WriteHandler.class).stopWriting());
             writeChannels.close().await();
             channel.close().await();
             writeGroup.shutdownGracefully().await();
@@ -137,30 +136,20 @@ public class TunChannelReadBenchmark extends AbstractBenchmark {
         receivedPackets.getAndDecrement();
     }
 
+    @SuppressWarnings({"unchecked", "CallToPrintStackTrace"})
     static class WriteHandler<E> extends ChannelDuplexHandler {
-        private final AtomicLong messagesWritten;
         private final E msg;
-        private final Function<E, E> msgDuplicator;
+        private final UnaryOperator<E> msgDuplicator;
         private volatile boolean stopWriting;
 
-        WriteHandler(final AtomicLong messagesWritten,
-                     final E msg,
-                     final Function<E, E> msgDuplicator) {
-            this.messagesWritten = messagesWritten;
+        public WriteHandler(final E msg,
+                     final UnaryOperator<E> msgDuplicator) {
             this.msg = requireNonNull(msg);
             this.msgDuplicator = requireNonNull(msgDuplicator);
         }
 
-        public WriteHandler(final E msg, Function<E, E> msgDuplicator) {
-            this(new AtomicLong(), msg, msgDuplicator);
-        }
-
         public WriteHandler(final ByteBuf msg) {
-            this(new AtomicLong(), (E) msg, e -> (E) ((ByteBuf) e).retainedDuplicate());
-        }
-
-        public AtomicLong messagesWritten() {
-            return messagesWritten;
+            this((E) msg, e -> (E) ((ByteBuf) e).retainedDuplicate());
         }
 
         public void stopWriting() {

@@ -32,7 +32,7 @@ import org.openjdk.jmh.annotations.TearDown;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicLong;
 
-@SuppressWarnings({"java:S112", "java:S2142", "DataFlowIssue"})
+@SuppressWarnings({"java:S112", "java:S2142", "DataFlowIssue", "JmhInspections", "NewClassNamingConvention", "StatementWithEmptyBody"})
 public class NativeTunChannelReadBenchmark extends AbstractBenchmark {
     private static final String SRC_ADDRESS = "10.10.10.10";
     private static final String DST_ADDRESS = "10.10.10.11";
@@ -47,24 +47,21 @@ public class NativeTunChannelReadBenchmark extends AbstractBenchmark {
     private Channel channel;
     private final AtomicLong receivedPackets = new AtomicLong();
 
-    @SuppressWarnings("unchecked")
     @Setup
     public void setup() {
-        writeGroup = new NioEventLoopGroup(writeThreads);
-        final Class<? extends TunChannel> channelClass;
-        if (KQueue.isAvailable()) {
-            group = new KQueueEventLoopGroup(1);
-            channelClass = KQueueTunChannel.class;
-        } else if (Epoll.isAvailable()) {
-            group = new EpollEventLoopGroup(1);
-            channelClass = EpollTunChannel.class;
-        } else {
-            throw new RuntimeException("Unsupported platform: Neither kqueue nor epoll are available");
-        }
-        // build packet
-        final ByteBuf msg = Unpooled.wrappedBuffer(new byte[packetSize]);
-
         try {
+            writeGroup = new NioEventLoopGroup(writeThreads);
+            final Class<? extends TunChannel> channelClass;
+            if (KQueue.isAvailable()) {
+                group = new KQueueEventLoopGroup(1);
+                channelClass = KQueueTunChannel.class;
+            } else if (Epoll.isAvailable()) {
+                group = new EpollEventLoopGroup(1);
+                channelClass = EpollTunChannel.class;
+            } else {
+                throw new RuntimeException("Unsupported platform: Neither kqueue nor epoll are available");
+            }
+
             channel = new Bootstrap()
                     .group(group)
                     .channel(channelClass)
@@ -92,6 +89,8 @@ public class NativeTunChannelReadBenchmark extends AbstractBenchmark {
                 exec("/sbin/ip", "addr", "add", SRC_ADDRESS + '/' + 31, "dev", name);
                 exec("/sbin/ip", "link", "set", "dev", name, "up");
             }
+
+            final ByteBuf msg = Unpooled.wrappedBuffer(new byte[packetSize]);
 
             final Bootstrap writeBootstrap = new Bootstrap()
                     .group(writeGroup)

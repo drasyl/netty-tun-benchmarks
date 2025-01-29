@@ -33,12 +33,11 @@ import org.pcap4j.packet.namednumber.UdpPort;
 
 import java.net.Inet4Address;
 import java.net.InetAddress;
-import java.net.UnknownHostException;
 
 import static org.drasyl.benchmarks.NativeTunChannelReadBenchmark.exec;
 import static org.pcap4j.packet.namednumber.IpVersion.IPV4;
 
-@SuppressWarnings({"java:S112", "java:S2142", "DataFlowIssue"})
+@SuppressWarnings({"java:S112", "java:S2142", "DataFlowIssue", "NewClassNamingConvention", "StatementWithEmptyBody", "JmhInspections"})
 public class NativeTunChannelWriteBenchmark extends AbstractBenchmark {
     private static final String SRC_ADDRESS = "10.10.10.10";
     private static final String DST_ADDRESS = "10.10.10.11";
@@ -48,40 +47,22 @@ public class NativeTunChannelWriteBenchmark extends AbstractBenchmark {
     private Channel channel;
     private WriteHandler<TunPacket> writeHandler;
 
-    @SuppressWarnings("unchecked")
     @Setup
-    public void setup() throws UnknownHostException {
-        final Class<? extends TunChannel> channelClass;
-        if (KQueue.isAvailable()) {
-            group = new KQueueEventLoopGroup(1);
-            channelClass = KQueueTunChannel.class;
-        } else if (Epoll.isAvailable()) {
-            group = new EpollEventLoopGroup(1);
-            channelClass = EpollTunChannel.class;
-        } else {
-            throw new RuntimeException("Unsupported platform: Neither kqueue nor epoll are available");
-        }
-
-        // build packet
-        final IpV4Packet.Builder packetBuilder = new IpV4Packet.Builder();
-        packetBuilder.version(IPV4)
-                .tos(IpV4Rfc791Tos.newInstance((byte) 0))
-                .identification((short) 100)
-                .ttl((byte) 100)
-                .protocol(IpNumber.UDP)
-                .srcAddr((Inet4Address) InetAddress.getByName(SRC_ADDRESS))
-                .dstAddr((Inet4Address) InetAddress.getByName(DST_ADDRESS))
-                .payloadBuilder(new UdpPacket.Builder()
-                        .srcPort(new UdpPort((short) 12345, "udp"))
-                        .dstPort(new UdpPort((short) 12345, "udp"))
-                        .payloadBuilder(new UnknownPacket.Builder().rawData(new byte[packetSize]))
-                        .correctLengthAtBuild(true)
-                )
-                .correctChecksumAtBuild(true)
-                .correctLengthAtBuild(true);
-        final Tun4Packet packet = new Tun4Packet(Unpooled.wrappedBuffer(packetBuilder.build().getRawData()));
-
+    public void setup() {
         try {
+            final Class<? extends TunChannel> channelClass;
+            if (KQueue.isAvailable()) {
+                group = new KQueueEventLoopGroup(1);
+                channelClass = KQueueTunChannel.class;
+            }
+            else if (Epoll.isAvailable()) {
+                group = new EpollEventLoopGroup(1);
+                channelClass = EpollTunChannel.class;
+            }
+            else {
+                throw new RuntimeException("Unsupported platform: Neither kqueue nor epoll are available");
+            }
+
             channel = new Bootstrap()
                     .group(group)
                     .channel(channelClass)
@@ -101,6 +82,24 @@ public class NativeTunChannelWriteBenchmark extends AbstractBenchmark {
                 exec("/sbin/ip", "addr", "add", SRC_ADDRESS + '/' + 31, "dev", name);
                 exec("/sbin/ip", "link", "set", "dev", name, "up");
             }
+
+            final IpV4Packet.Builder packetBuilder = new IpV4Packet.Builder();
+            packetBuilder.version(IPV4)
+                    .tos(IpV4Rfc791Tos.newInstance((byte) 0))
+                    .identification((short) 100)
+                    .ttl((byte) 100)
+                    .protocol(IpNumber.UDP)
+                    .srcAddr((Inet4Address) InetAddress.getByName(SRC_ADDRESS))
+                    .dstAddr((Inet4Address) InetAddress.getByName(DST_ADDRESS))
+                    .payloadBuilder(new UdpPacket.Builder()
+                            .srcPort(new UdpPort((short) 12345, "udp"))
+                            .dstPort(new UdpPort((short) 12345, "udp"))
+                            .payloadBuilder(new UnknownPacket.Builder().rawData(new byte[packetSize]))
+                            .correctLengthAtBuild(true)
+                    )
+                    .correctChecksumAtBuild(true)
+                    .correctLengthAtBuild(true);
+            final Tun4Packet packet = new Tun4Packet(Unpooled.wrappedBuffer(packetBuilder.build().getRawData()));
 
             writeHandler = new WriteHandler<>(packet, oldPacket -> new Tun4Packet(oldPacket.content().retainedDuplicate()));
             channel.pipeline().addLast(writeHandler);
