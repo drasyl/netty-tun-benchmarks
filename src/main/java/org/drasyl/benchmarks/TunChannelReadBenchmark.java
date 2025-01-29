@@ -9,6 +9,7 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.channel.ChannelInitializer;
 import io.netty.channel.DefaultEventLoopGroup;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.group.ChannelGroup;
@@ -100,7 +101,12 @@ public class TunChannelReadBenchmark extends AbstractBenchmark {
             final Bootstrap writeBootstrap = new Bootstrap()
                     .group(writeGroup)
                     .channel(NioDatagramChannel.class)
-                    .handler(new WriteHandler<>(msg));
+                    .handler(new ChannelInitializer<>() {
+                        @Override
+                        protected void initChannel(final Channel ch) {
+                            ch.pipeline().addLast(new WriteHandler<>(msg));
+                        }
+                    });
 
             writeChannels = new DefaultChannelGroup(writeGroup.next());
             for (int i = 0; i < writeThreads; i++) {
