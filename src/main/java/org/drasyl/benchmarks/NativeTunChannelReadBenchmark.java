@@ -32,6 +32,7 @@ import org.openjdk.jmh.annotations.TearDown;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicLong;
 
+@SuppressWarnings({"java:S112", "java:S2142", "DataFlowIssue"})
 public class NativeTunChannelReadBenchmark extends AbstractBenchmark {
     private static final String SRC_ADDRESS = "10.10.10.10";
     private static final String DST_ADDRESS = "10.10.10.11";
@@ -111,7 +112,7 @@ public class NativeTunChannelReadBenchmark extends AbstractBenchmark {
     @TearDown
     public void teardown() {
         try {
-            writeChannels.forEach(channel -> channel.pipeline().get(WriteHandler.class).stopWriting());
+            writeChannels.forEach(ch -> ch.pipeline().get(WriteHandler.class).stopWriting());
             writeChannels.close().await();
             channel.close().await();
             writeGroup.shutdownGracefully().await();
@@ -131,7 +132,7 @@ public class NativeTunChannelReadBenchmark extends AbstractBenchmark {
         receivedPackets.getAndDecrement();
     }
 
-    private static void exec(final String... command) throws IOException {
+    static void exec(final String... command) throws IOException {
         try {
             final int exitCode = Runtime.getRuntime().exec(command).waitFor();
             if (exitCode != 0) {

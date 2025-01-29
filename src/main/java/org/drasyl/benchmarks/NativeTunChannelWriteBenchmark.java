@@ -3,6 +3,7 @@ package org.drasyl.benchmarks;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.epoll.Epoll;
 import io.netty.channel.epoll.EpollEventLoopGroup;
@@ -14,6 +15,7 @@ import io.netty.channel.socket.Tun4Packet;
 import io.netty.channel.socket.TunAddress;
 import io.netty.channel.socket.TunChannel;
 import io.netty.channel.socket.TunPacket;
+import io.netty.util.internal.PlatformDependent;
 import org.drasyl.benchmarks.TunChannelWriteBenchmark.WriteHandler;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -33,15 +35,18 @@ import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 
+import static org.drasyl.benchmarks.NativeTunChannelReadBenchmark.exec;
 import static org.pcap4j.packet.namednumber.IpVersion.IPV4;
 
+@SuppressWarnings({"java:S112", "java:S2142", "DataFlowIssue"})
 public class NativeTunChannelWriteBenchmark extends AbstractBenchmark {
-    private static final String ADDRESS = "10.10.10.10";
+    private static final String SRC_ADDRESS = "10.10.10.10";
+    private static final String DST_ADDRESS = "10.10.10.11";
     @Param({ "1468" })
     private int packetSize;
     private EventLoopGroup group;
     private Channel channel;
-    protected WriteHandler<TunPacket> writeHandler;
+    private WriteHandler<TunPacket> writeHandler;
 
     @SuppressWarnings("unchecked")
     @Setup
@@ -64,8 +69,8 @@ public class NativeTunChannelWriteBenchmark extends AbstractBenchmark {
                 .identification((short) 100)
                 .ttl((byte) 100)
                 .protocol(IpNumber.UDP)
-                .srcAddr((Inet4Address) InetAddress.getByName(ADDRESS))
-                .dstAddr((Inet4Address) InetAddress.getByName(ADDRESS))
+                .srcAddr((Inet4Address) InetAddress.getByName(SRC_ADDRESS))
+                .dstAddr((Inet4Address) InetAddress.getByName(DST_ADDRESS))
                 .payloadBuilder(new UdpPacket.Builder()
                         .srcPort(new UdpPort((short) 12345, "udp"))
                         .dstPort(new UdpPort((short) 12345, "udp"))
@@ -77,14 +82,28 @@ public class NativeTunChannelWriteBenchmark extends AbstractBenchmark {
         final Tun4Packet packet = new Tun4Packet(Unpooled.wrappedBuffer(packetBuilder.build().getRawData()));
 
         try {
-            writeHandler = new WriteHandler<>(packet, oldPacket -> new Tun4Packet(oldPacket.content().retainedDuplicate()));
             channel = new Bootstrap()
                     .group(group)
                     .channel(channelClass)
-                    .handler(writeHandler)
+                    .handler(new ChannelInboundHandlerAdapter())
                     .bind(new TunAddress())
                     .sync()
                     .channel();
+            final String name = ((TunAddress) channel.localAddress()).ifName();
+
+            if (PlatformDependent.isOsx()) {
+                exec("/sbin/ifconfig", name, "add", SRC_ADDRESS, SRC_ADDRESS);
+                exec("/sbin/ifconfig", name, "up");
+                exec("/sbin/route", "add", "-net", SRC_ADDRESS + '/' + 31, "-iface", name);
+            }
+            else {
+                // Linux
+                exec("/sbin/ip", "addr", "add", SRC_ADDRESS + '/' + 31, "dev", name);
+                exec("/sbin/ip", "link", "set", "dev", name, "up");
+            }
+
+            writeHandler = new WriteHandler<>(packet, oldPacket -> new Tun4Packet(oldPacket.content().retainedDuplicate()));
+            channel.pipeline().addLast(writeHandler);
         }
         catch (final Exception e) {
             handleUnexpectedException(e);
